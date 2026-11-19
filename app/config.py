@@ -32,4 +32,3 @@ class Settings:
     groq_model: str = field(default_factory=lambda: _get("GROQ_MODEL", "openai/gpt-oss-120b"))
     embed_model: str = field(default_factory=lambda: _get("EMBED_MODEL",
                                                           "gemini-embedding-001"))
-    demo_mode: bool = field(default_factory=lambda: _get("DEMO_MODE", "0") == "1")

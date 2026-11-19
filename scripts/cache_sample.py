@@ -1,4 +1,4 @@
-"""Reads the sample policy once with the live LLM and saves the result, so DEMO_MODE needs
+"""Reads the sample policy once with the live LLM and saves the result, so the sample policy needs
 no API calls. Run: python -m scripts.cache_sample"""
 
 from pathlib import Path
