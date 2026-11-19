@@ -41,8 +41,10 @@ The design rule: **the LLM finds and quotes, plain code calculates.**
    schema: `found`, `page`, a word-for-word `quote`, and typed fields (enums for
    categories, numbers for money).
 3. **Verify.** Each quote is searched for in the PDF text (case, whitespace, hyphenation
-   and `Rs. 5,000` vs `₹5000` normalised). **A rule whose quote isn't in the document is
-   discarded**, and the user is asked to enter it. Nothing unproven reaches the maths.
+   and `Rs. 5,000` vs `₹5000` normalised), and the quote must itself state the value: a
+   "1% of the Sum Insured" sentence can't verify "₹1 per day", and a generic sentence can't
+   verify a 10% co-pay. **A rule that fails either check is discarded** and the user is
+   asked to enter it. Nothing unproven reaches the maths.
 4. **Calculate.** A pure-Python engine (`app/engine.py`, no I/O, `Decimal` money) applies
    the rules in order: non-payables → room/ICU caps → proportionate deduction → sub-limit
    → deductible → co-pay → sum insured. Every step and every line carries its reason and
@@ -82,7 +84,7 @@ python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # bin/ on macOS/
 cp .env.example .env                        # add GEMINI_API_KEY (and GROQ_API_KEY) for uploads
 cd web && npm ci && npm run build && cd ..
 uvicorn app.main:app --port 8011            # http://localhost:8011
-pytest                                      # 62 tests
+pytest                                      # 79 tests
 ```
 
 Without API keys the sample policy still works: its reading is cached in
@@ -103,7 +105,7 @@ Without API keys the sample policy still works: its reading is cached in
 - An estimate, not insurance advice. Insurers word rules differently, and claims also depend
   on medical necessity, waiting periods and the insurer's own assessment.
 - Hospital estimates are entered as line items; reading estimate PDFs isn't built yet.
-- Scanned (image-only) PDFs are rejected; there's no OCR.
+- Scanned (image-only) PDFs are rejected; there's no OCR. Uploads are capped at 15 MB / 150 pages.
 - Conditional rules (co-pay only above an age or in some zones) are reported as not found
   rather than guessed.
 
