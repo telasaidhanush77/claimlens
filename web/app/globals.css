@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f6f2ea;
+  --color-card: #fffdf8;
+  --color-ink: #1d1b18;
+  --color-muted: #6c665c;
+  --color-line: #e2dacb;
+  --color-teal: #0e6b67;
+  --color-teal-soft: #dcefeb;
+  --color-amber: #9a5b0c;
+  --color-amber-soft: #f8ead2;
+  --color-loss: #a3382a;
+  --font-serif: var(--font-fraunces), Georgia, serif;
+  --font-sans: var(--font-plex), system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+.num { font-variant-numeric: tabular-nums; }
+
+:focus-visible { outline: 2px solid var(--color-teal); outline-offset: 2px; border-radius: 4px; }
+
+input, select { background: var(--color-card); }
