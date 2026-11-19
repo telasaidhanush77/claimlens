@@ -42,9 +42,18 @@ def store(pool: ConnectionPool, policy_id: UUID, pages: list[str], embedder: Emb
 
 def search(pool: ConnectionPool, policy_id: UUID, query: str, embedder: Embedder,
            k: int = 4) -> list[tuple[int, str]]:
-    q = _vec(embedder.embed([query], "query")[0])
+    return search_many(pool, policy_id, [query], embedder, k)[0]
+
+
+def search_many(pool: ConnectionPool, policy_id: UUID, queries: list[str],
+                embedder: Embedder, k: int = 4) -> list[list[tuple[int, str]]]:
+    """Top-k (page, text) per query, with one embedding call for all queries."""
+    out = []
     with pool.connection() as conn:
-        rows = conn.execute(
-            "SELECT page, text FROM chunks WHERE policy_id = %s "
-            "ORDER BY embedding <=> %s::vector LIMIT %s", (policy_id, q, k)).fetchall()
-    return [(page, text) for page, text in rows]
+        for v in embedder.embed(queries, "query"):
+            rows = conn.execute(
+                "SELECT page, text FROM chunks WHERE policy_id = %s "
+                "ORDER BY embedding <=> %s::vector LIMIT %s",
+                (policy_id, _vec(v), k)).fetchall()
+            out.append([(page, text) for page, text in rows])
+    return out
