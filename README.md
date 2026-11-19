@@ -7,7 +7,7 @@ that decide your claim, quotes each one with its page number, and works out the 
 by line: what the insurer pays, what you pay, and why, for every rupee. It also shows
 what a cheaper room would save you.
 
-**Live demo:** _deploying_ · built with FastAPI, Postgres + pgvector, Gemini / Groq, Next.js
+**Live demo:** https://claimlens-07p4.onrender.com (free tier: the first load can take ~1 minute to wake) · built with FastAPI, Postgres + pgvector, Gemini / Groq, Next.js
 
 ![ClaimLens result for the sample knee-replacement estimate](docs/screenshot.png)
 
@@ -66,7 +66,9 @@ hospital estimate ─────────────────► claim e
 
 Beyond the bundled fictional sample, ClaimLens was run on a public 39-page insurer policy
 wording (New India Mediclaim). It verified the room limit (1% of sum insured, p.9), ICU limit
-(2%), the proportionate-deduction clause, and the procedure sub-limits, all with page quotes.
+(2%) and the proportionate-deduction clause, all with page quotes. Its procedure
+sub-limits are spread over several sentences, so no single quote states every amount; the
+value-in-quote check therefore leaves them for the user rather than verify them loosely.
 It resolved the clause *"all expenses except pharmacy, consumables, implants and
 diagnostics"* to the right categories. It correctly reported the sum insured as not
 stated, because that lives in each customer's policy schedule.
