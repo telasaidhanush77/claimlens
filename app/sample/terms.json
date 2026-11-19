@@ -1,0 +1,72 @@
+{
+  "sum_insured": {
+    "value": "500000",
+    "page": 2,
+    "quote": "The Sum Insured under this Policy is Rs. 5,00,000 for each Policy Year, available on a floater basis to all Insured Persons.",
+    "verified": true
+  },
+  "room_limit": {
+    "value": {
+      "kind": "pct_si",
+      "amount": "1"
+    },
+    "page": 3,
+    "quote": "Room rent, boarding and nursing expenses are payable up to 1% of the Sum Insured per day for a normal room.",
+    "verified": true
+  },
+  "icu_limit": {
+    "value": {
+      "kind": "pct_si",
+      "amount": "2"
+    },
+    "page": 3,
+    "quote": "Intensive Care Unit (ICU) charges are payable up to 2% of the Sum Insured per day.",
+    "verified": true
+  },
+  "proportionate": {
+    "value": true,
+    "page": 3,
+    "quote": "Proportionate deduction: if the Insured Person occupies a room whose rent exceeds the limit in Clause 3.1, the Associated Medical Expenses (surgeon and consultant fees, operation theatre charges, diagnostic charges and other hospital charges) shall be payable in the same proportion as the admissible room rent bears to the actual room rent.",
+    "verified": true
+  },
+  "proportionate_categories": {
+    "value": [
+      "surgeon",
+      "ot",
+      "diagnostics",
+      "other"
+    ],
+    "page": 3,
+    "quote": "Proportionate deduction: if the Insured Person occupies a room whose rent exceeds the limit in Clause 3.1, the Associated Medical Expenses (surgeon and consultant fees, operation theatre charges, diagnostic charges and other hospital charges) shall be payable in the same proportion as the admissible room rent bears to the actual room rent.",
+    "verified": true
+  },
+  "copay_pct": {
+    "value": "10",
+    "page": 4,
+    "quote": "A co-payment of 10% shall apply to every admissible claim under this Policy, after all other limits have been applied.",
+    "verified": true
+  },
+  "deductible": {
+    "value": "0",
+    "page": 4,
+    "quote": "No deductible applies under this Policy.",
+    "verified": true
+  },
+  "sublimits": {
+    "value": {
+      "Cataract surgery": "40000",
+      "Knee replacement": "300000"
+    },
+    "page": 4,
+    "quote": "The following sub-limits apply per Policy Year: Cataract surgery up to Rs. 40,000 per eye; Knee replacement up to Rs. 3,00,000.",
+    "verified": true
+  },
+  "non_payable": {
+    "value": [
+      "consumables"
+    ],
+    "page": 6,
+    "quote": "Consumables are not payable under this Policy.",
+    "verified": true
+  }
+}

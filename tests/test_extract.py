@@ -121,3 +121,15 @@ def test_read_policy_llm_failure_leaves_nothing_behind(pool):
         read_policy(pool, "p.pdf", _pdf(PAGES), FakeEmbedder(), ScriptedLLM(error=True))
     with pool.connection() as conn:
         assert conn.execute("SELECT count(*) FROM policies").fetchone()[0] == 0
+
+
+def test_flattened_object_value_accepted():
+    llm = ScriptedLLM({"room_limit": {"kind": "pct_si", "amount": 1, "page": 2,
+                                      "quote": "Room rent is payable up to 1% of the Sum Insured"}})
+    terms = extract_terms(PAGES, RETRIEVED, llm)
+    assert terms.room_limit.verified and terms.room_limit.value.amount == Decimal(1)
+
+
+def test_bare_value_without_quote_dropped():
+    llm = ScriptedLLM({"sublimits": {"Cataract surgery": 40000}})
+    assert extract_terms(PAGES, RETRIEVED, llm).sublimits.value is None

@@ -1,0 +1,18 @@
+{
+  "procedure": "Knee replacement",
+  "items": [
+    {"description": "Deluxe room (4 days)", "category": "room", "amount": 32000, "days": 4},
+    {"description": "Surgeon and anaesthetist fees", "category": "surgeon", "amount": 70000},
+    {"description": "Operation theatre charges", "category": "ot", "amount": 35000},
+    {"description": "X-ray, MRI and blood tests", "category": "diagnostics", "amount": 18000},
+    {"description": "Knee implant", "category": "implants", "amount": 90000},
+    {"description": "Medicines", "category": "medicines", "amount": 22000},
+    {"description": "Gloves, syringes, dressings", "category": "consumables", "amount": 9000}
+  ],
+  "room_options": [
+    {"name": "General ward", "rate_per_day": 2500},
+    {"name": "Twin sharing", "rate_per_day": 4500},
+    {"name": "Single private room", "rate_per_day": 6500},
+    {"name": "Deluxe room", "rate_per_day": 8000}
+  ]
+}

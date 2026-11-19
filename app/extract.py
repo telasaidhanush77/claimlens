@@ -37,15 +37,22 @@ SHAPES = {
     "copay_pct": "number, percent",
     "deductible": "number, rupees",
     "sublimits": '{"<procedure name>": number rupees, ...}',
-    "non_payable": "list of categories the policy never pays for",
+    "non_payable": "list of categories the policy never pays for. Only list a category "
+                   "if everything in it is excluded (e.g. consumables); a few excluded "
+                   "admin charges do not make the whole 'other' category non-payable",
 }
 
 PROMPT = """You read Indian health-insurance policy wordings.
-From the passages below, extract each term. Answer with JSON only, one key per term:
+From the passages below, extract each term. Answer with JSON only, one key per term.
+Every term uses the same wrapper:
   "<term>": {{"value": <value>, "page": <page number>, "quote": "<the exact sentence from
   the passage that states it, copied word for word>"}}
+Example: "copay_pct": {{"value": 20, "page": 7, "quote": "A co-payment of 20% applies to
+each claim."}}  and  "room_limit": {{"value": {{"kind": "per_day", "amount": 3000}},
+"page": 4, "quote": "Room rent is covered up to Rs. 3,000 per day."}}
 or "<term>": null when the passages do not state it. Never guess a value: if you can't quote
-it, answer null.
+it, answer null. If the policy explicitly says a term does not apply (for example "no
+deductible applies"), answer value 0 (or false, or []) with that sentence as the quote.
 
 Terms and value shapes:
 {shapes}
@@ -72,7 +79,12 @@ def _prompt(retrieved: dict[str, list[tuple[int, str]]]) -> str:
 
 
 def _term(name: str, raw: Any, pages: list[str]) -> Term:
-    if not isinstance(raw, dict) or raw.get("value") is None:
+    if not isinstance(raw, dict):
+        return Term()
+    if "value" not in raw and "quote" in raw:  # model flattened {"kind":..,"page":..,"quote":..}
+        raw = {"value": {k: v for k, v in raw.items() if k not in ("page", "quote")},
+               "page": raw.get("page"), "quote": raw["quote"]}
+    if raw.get("value") is None:
         return Term()
     try:
         value = _ADAPTERS[name].validate_python(raw["value"])
