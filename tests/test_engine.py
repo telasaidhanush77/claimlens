@@ -121,3 +121,33 @@ def test_cheaper_room_lowers_you_pay():
     assert by_name["Twin sharing"].you_pay < by_name["Deluxe"].you_pay
     assert by_name["Deluxe"].insurer_pays == sim.insurer_pays
     assert [c.you_pay for c in sim.room_choices] == sorted(c.you_pay for c in sim.room_choices)
+
+
+# --- final-review fixes ---
+
+def test_proportionate_without_categories_falls_back_to_associated():
+    est = Estimate(items=ABOVE_LIMIT)
+    sim = simulate(policy(copay_pct=Decimal(0), proportionate_categories=None), est)
+    assert sim.insurer_pays == 112500  # same as the explicit associated list
+    assert any("standard" in n.lower() for line in sim.lines for n in line.notes)
+
+
+def test_room_in_proportionate_categories_not_cut_twice():
+    sim = simulate(policy(copay_pct=Decimal(0), proportionate_categories=["room", "surgeon"]),
+                   Estimate(items=ABOVE_LIMIT[:2]))
+    room = next(line for line in sim.lines if line.category == "room")
+    assert room.payable == 20000
+
+
+def test_no_cap_step_when_nothing_capped():
+    est = Estimate(items=[item("Room", "room", 16000, 4), item("Surgeon", "surgeon", 50000)])
+    labels = [s.label for s in simulate(policy(copay_pct=Decimal(0)), est).steps]
+    assert not any("Cap room" in label for label in labels)
+    assert not any("Proportionate" in label for label in labels)
+
+
+@pytest.mark.parametrize("over", [dict(copay_pct=Decimal(150)), dict(deductible=Decimal(-5)),
+                                  dict(sum_insured=Decimal(0))])
+def test_out_of_range_terms_rejected(over):
+    with pytest.raises(ValidationError):
+        policy(**over)

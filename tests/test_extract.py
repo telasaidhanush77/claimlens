@@ -7,6 +7,7 @@ from app.embed import FakeEmbedder
 from app.extract import PROMPT_BUDGET, SCHEMA, TERM_QUERIES, _passages, extract_terms, read_policy
 from app.llm import FallbackLLM, LLMError
 from app.models import PolicyTerms
+from app.pdf import read_pages
 
 PAGES = [
     "Definitions. The Sum Insured under this policy is Rs. 5,00,000 for the policy year. " * 3,
@@ -87,9 +88,11 @@ def test_category_outside_enum_rejected():
 
 
 def test_sublimits_become_a_mapping():
-    llm = ScriptedLLM({"sublimits": found(1, "The Sum Insured under this policy", items=[
-        {"procedure": "Cataract", "amount": 40000}])})
-    assert extract_terms(PAGES, RETRIEVED, llm).sublimits.value == {"Cataract": Decimal(40000)}
+    pages = PAGES + ["Cataract surgery is payable up to Rs. 40,000 per eye. " * 3]
+    retrieved = {f: [(4, pages[3])] for f in TERM_QUERIES}
+    llm = ScriptedLLM({"sublimits": found(4, "Cataract surgery is payable up to Rs. 40,000",
+                                          items=[{"procedure": "Cataract", "amount": 40000}])})
+    assert extract_terms(pages, retrieved, llm).sublimits.value == {"Cataract": Decimal(40000)}
 
 
 def test_non_dict_reply_entries_ignored():
@@ -134,7 +137,7 @@ def _pdf(pages):
 
 def test_read_policy_saves_verified_terms(pool):
     llm = ScriptedLLM({"copay_pct": found(3, "A co-payment of 10% shall apply", amount=10)})
-    pid, terms = read_policy(pool, "p.pdf", _pdf(PAGES), FakeEmbedder(), llm)
+    pid, terms = read_policy(pool, "p.pdf", read_pages(_pdf(PAGES)), FakeEmbedder(), llm)
     assert terms.copay_pct.verified
     with pool.connection() as conn:
         saved = conn.execute("SELECT terms FROM policies WHERE id=%s", (pid,)).fetchone()[0]
@@ -145,7 +148,7 @@ def test_read_policy_saves_verified_terms(pool):
 
 def test_read_policy_llm_failure_leaves_nothing_behind(pool):
     with pytest.raises(LLMError):
-        read_policy(pool, "p.pdf", _pdf(PAGES), FakeEmbedder(), ScriptedLLM(error=True))
+        read_policy(pool, "p.pdf", read_pages(_pdf(PAGES)), FakeEmbedder(), ScriptedLLM(error=True))
     with pool.connection() as conn:
         assert conn.execute("SELECT count(*) FROM policies").fetchone()[0] == 0
 
@@ -165,3 +168,39 @@ def test_proportionate_named_list_kept_minus_exclusions():
         1, QUOTE, reduced=["surgeon", "ot", "medicines"], not_reduced=["medicines"])})
     value = extract_terms(PAGES, RETRIEVED, llm).proportionate_categories.value
     assert sorted(value) == ["ot", "surgeon"]
+
+
+def test_value_must_appear_in_quote():
+    llm = ScriptedLLM({"copay_pct": found(3, "A co-payment of 10% shall apply", amount=20)})
+    assert extract_terms(PAGES, RETRIEVED, llm).copay_pct.value is None
+
+
+def test_limit_kind_must_match_quote():
+    llm = ScriptedLLM({"room_limit": found(2, "Room rent is payable up to 1% of the Sum Insured",
+                                           kind="per_day", amount=1)})
+    assert extract_terms(PAGES, RETRIEVED, llm).room_limit.value is None
+
+
+def test_generic_quote_cannot_verify_a_number():
+    llm = ScriptedLLM({"copay_pct": found(2, "Room rent is payable up to", amount=10)})
+    assert extract_terms(PAGES, RETRIEVED, llm).copay_pct.value is None
+
+
+def test_indian_digit_grouping_matches():
+    llm = ScriptedLLM({"sum_insured": found(1, "The Sum Insured under this policy is Rs. 5,00,000",
+                                            amount=500000)})
+    assert extract_terms(PAGES, RETRIEVED, llm).sum_insured.value == Decimal(500000)
+
+
+def test_explicit_none_quote_verifies_zero():
+    pages = PAGES + ["No deductible applies under this policy at all. " * 3]
+    retrieved = {f: [(4, pages[3])] for f in TERM_QUERIES}
+    llm = ScriptedLLM({"deductible": found(4, "No deductible applies under this policy", amount=0)})
+    assert extract_terms(pages, retrieved, llm).deductible.value == Decimal(0)
+
+
+def test_extracted_copay_over_100_rejected():
+    pages = PAGES + ["A co-payment of 150% applies to each claim. " * 3]
+    retrieved = {f: [(4, pages[3])] for f in TERM_QUERIES}
+    llm = ScriptedLLM({"copay_pct": found(4, "A co-payment of 150% applies", amount=150)})
+    assert extract_terms(pages, retrieved, llm).copay_pct.value is None

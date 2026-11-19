@@ -7,6 +7,7 @@ from app.config import Settings
 from app.db import make_pool, migrate
 from app.deps import build_embedder, build_llm
 from app.extract import read_policy
+from app.pdf import read_pages
 
 SAMPLE = Path(__file__).resolve().parent.parent / "app" / "sample"
 
@@ -15,7 +16,7 @@ def main() -> None:
     s = Settings()
     pool = make_pool(s.database_url)
     migrate(pool)
-    pid, terms = read_policy(pool, "sample", (SAMPLE / "policy.pdf").read_bytes(),
+    pid, terms = read_policy(pool, "sample", read_pages((SAMPLE / "policy.pdf").read_bytes()),
                              build_embedder(s), build_llm(s))
     with pool.connection() as conn:
         conn.execute("DELETE FROM policies WHERE id = %s", (pid,))

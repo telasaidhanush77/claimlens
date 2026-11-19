@@ -6,6 +6,7 @@ deduction -> procedure sub-limit -> deductible -> co-pay -> sum-insured cap."""
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.models import (
+    ASSOCIATED,
     Estimate,
     Limit,
     LineItem,
@@ -67,31 +68,44 @@ def simulate(terms: PolicyTerms, est: Estimate) -> Simulation:
                           page=terms.non_payable.page))
 
     # 2. Room and ICU rent above the daily limit.
+    capped_page = None
     for li, r in zip(est.items, results, strict=True):
-        cap, term = (room_cap, terms.room_limit) if li.category == "room" else \
-                    (icu_cap, terms.icu_limit) if li.category == "icu" else (None, None)
+        if li.category == "room":
+            cap, term = room_cap, terms.room_limit
+        elif li.category == "icu":
+            cap, term = icu_cap, terms.icu_limit
+        else:
+            continue
         if cap is None or r.payable == ZERO:
             continue
         rate = li.amount / li.days
         if rate > cap:
             r.payable = cap * li.days
+            capped_page = capped_page or term.page
             r.notes.append(f"Paid up to {_fmt(cap)}/day, your room is {_fmt(rate)}/day"
                            f"{_p(term)}")
-    steps.append(Step(label="Cap room / ICU rent at the daily limit", total_after=total(),
-                      page=terms.room_limit.page))
+    if capped_page or any(r.payable < r.billed and r.category in ("room", "icu")
+                          and r.category not in non_payable for r in results):
+        steps.append(Step(label="Cap room / ICU rent at the daily limit", total_after=total(),
+                          page=capped_page))
 
     # 3. Proportionate deduction: a pricier room shrinks the linked charges too.
     rate = _room_rate(est.items)
     if terms.proportionate.value and room_cap and rate and rate > room_cap:
         ratio = room_cap / rate
-        cut = set(terms.proportionate_categories.value or [])
+        named = terms.proportionate_categories.value
+        cut = set(named if named is not None else ASSOCIATED) - {"room", "icu"}
+        why = "" if named is not None else ", standard associated charges assumed"
+        changed = False
         for r in results:
             if r.category in cut and r.payable > ZERO:
                 r.payable = r.payable * ratio
+                changed = True
                 r.notes.append(f"Cut to {ratio * 100:.1f}% because the room is above your "
-                               f"limit{_p(terms.proportionate)}")
-        steps.append(Step(label=f"Proportionate deduction ({ratio * 100:.1f}%)",
-                          total_after=total(), page=terms.proportionate.page))
+                               f"limit{_p(terms.proportionate)}{why}")
+        if changed:
+            steps.append(Step(label=f"Proportionate deduction ({ratio * 100:.1f}%)",
+                              total_after=total(), page=terms.proportionate.page))
 
     claim = total()
 

@@ -73,3 +73,19 @@ def test_scanned_pdf_raises_no_text_layer():
 def test_garbage_bytes_raise_bad_pdf():
     with pytest.raises(BadPDF):
         read_pages(b"not a pdf at all")
+
+
+def test_hyphen_at_line_end_matches_hyphenated_quote():
+    pages = ["A co-\npayment of 10% applies to every admissible claim."]
+    assert locate_quote(pages, "A co-payment of 10% applies", None) == 1
+
+
+def test_parser_crash_becomes_bad_pdf(monkeypatch):
+    import app.pdf as pdf_mod
+
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RecursionError("deep")
+    monkeypatch.setattr(pdf_mod, "PdfReader", Boom)
+    with pytest.raises(BadPDF):
+        read_pages(b"%PDF-1.4")

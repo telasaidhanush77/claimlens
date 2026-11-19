@@ -58,22 +58,33 @@ export function TermsList({ terms, onSave }: Props) {
 }
 
 function TermRow({ name, terms, onSave }: { name: TermName } & Props) {
+  const [editing, setEditing] = useState(false);
   const t = terms[name] as Term<unknown>;
   const entered = !t.verified && t.value !== null;
+  const canEdit = EDITABLE.includes(name);
+  const save = async (next: PolicyTerms) => {
+    await onSave(next);
+    setEditing(false);
+  };
   return (
     <li className="grid gap-1 px-4 py-3 sm:grid-cols-[12rem_1fr] sm:gap-4">
       <span className="text-sm font-medium text-muted">{LABEL[name]}</span>
       <div className="min-w-0">
-        {t.value !== null ? (
+        {t.value !== null && !editing ? (
           <p className="num font-medium">
             {show(name, t, terms.sum_insured)}
             {t.verified && (
               <span className="ml-2 rounded-full bg-teal-soft px-2 py-0.5 text-xs font-medium text-teal">✓ quoted p.{t.page}</span>
             )}
             {entered && <span className="ml-2 text-xs text-muted">entered by you</span>}
+            {canEdit && (
+              <button type="button" onClick={() => setEditing(true)} className="ml-2 rounded px-1.5 text-xs font-normal text-teal underline-offset-2 hover:underline">
+                edit
+              </button>
+            )}
           </p>
-        ) : EDITABLE.includes(name) ? (
-          <TermInput name={name} terms={terms} onSave={onSave} />
+        ) : canEdit ? (
+          <TermInput name={name} terms={terms} onSave={save} onCancel={t.value !== null ? () => setEditing(false) : undefined} />
         ) : (
           <p className="text-sm text-muted">Not found in the policy, treated as none.</p>
         )}
@@ -85,7 +96,7 @@ function TermRow({ name, terms, onSave }: { name: TermName } & Props) {
   );
 }
 
-function TermInput({ name, terms, onSave }: { name: TermName } & Props) {
+function TermInput({ name, terms, onSave, onCancel }: { name: TermName; onCancel?: () => void } & Props) {
   const [amount, setAmount] = useState("");
   const [kind, setKind] = useState<Limit["kind"]>("per_day");
   const [saving, setSaving] = useState(false);
@@ -93,7 +104,7 @@ function TermInput({ name, terms, onSave }: { name: TermName } & Props) {
   const isBool = name === "proportionate";
 
   const save = async (raw: string) => {
-    if (raw === "") return;
+    if (raw === "" || Number.isNaN(Number(raw))) return;
     const value = isBool ? raw === "yes" : isLimit ? { kind, amount: raw } : raw;
     setSaving(true);
     try {
@@ -105,7 +116,7 @@ function TermInput({ name, terms, onSave }: { name: TermName } & Props) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-soft px-3 py-2 text-sm">
-      <span className="text-amber">Not found in your policy. Enter it from your policy schedule:</span>
+      <span className="text-amber">{onCancel ? "Enter the correct value:" : "Not found in your policy. Enter it from your policy schedule:"}</span>
       {isBool ? (
         <select aria-label={LABEL[name]} disabled={saving} defaultValue="" onChange={(e) => save(e.target.value)} className="rounded border border-line px-2 py-1">
           <option value="" disabled>Choose</option>
@@ -117,7 +128,9 @@ function TermInput({ name, terms, onSave }: { name: TermName } & Props) {
           <input
             aria-label={LABEL[name]} inputMode="decimal" disabled={saving} value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
-            onBlur={() => save(amount)} onKeyDown={(e) => e.key === "Enter" && save(amount)}
+            // A limit also needs its unit, so it saves on Enter / Save only, not on blur.
+            onBlur={isLimit ? undefined : () => save(amount)}
+            onKeyDown={(e) => e.key === "Enter" && save(amount)}
             className="num w-28 rounded border border-line px-2 py-1"
             placeholder={name === "copay_pct" ? "%" : "₹"}
           />
@@ -127,7 +140,15 @@ function TermInput({ name, terms, onSave }: { name: TermName } & Props) {
               <option value="pct_si">% of sum insured</option>
             </select>
           )}
+          {isLimit && (
+            <button type="button" disabled={saving || amount === ""} onClick={() => save(amount)} className="rounded bg-ink px-2.5 py-1 text-paper disabled:opacity-50">
+              Save
+            </button>
+          )}
         </>
+      )}
+      {onCancel && (
+        <button type="button" onClick={onCancel} className="rounded px-2 py-1 text-muted hover:text-ink">Cancel</button>
       )}
     </div>
   );

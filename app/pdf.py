@@ -5,7 +5,6 @@ import io
 import re
 
 from pypdf import PdfReader
-from pypdf.errors import PyPdfError
 
 MIN_TEXT_CHARS = 200
 MIN_QUOTE_CHARS = 12
@@ -23,7 +22,7 @@ def read_pages(data: bytes) -> list[str]:
     """Text of each page (index 0 = page 1)."""
     try:
         pages = [page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages]
-    except (PyPdfError, ValueError, KeyError, TypeError, OSError) as exc:
+    except Exception as exc:  # untrusted input: any parser failure means "not a readable PDF"
         raise BadPDF(f"not a readable PDF: {exc}") from exc
     if sum(len(p.strip()) for p in pages) < MIN_TEXT_CHARS:
         raise NoTextLayer("no text layer")
@@ -32,7 +31,7 @@ def read_pages(data: bytes) -> list[str]:
 
 def normalize(s: str) -> str:
     s = s.lower().translate(str.maketrans("‘’“”–—", "''\"\"--"))
-    s = re.sub(r"-\s*\n\s*", "", s)  # words split across lines
+    s = re.sub(r"(?<=[a-z])-\s*(?=[a-z])", "", s)  # co-payment / co-\npayment -> copayment
     s = s.replace("₹", " rs ")
     s = re.sub(r"\b(?:rs\.?|inr)(?=[\s\d])", " rs ", s)
     s = re.sub(r"(?<=\d),(?=\d)", "", s)  # 5,000 -> 5000

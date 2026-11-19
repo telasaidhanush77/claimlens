@@ -9,6 +9,25 @@ Category = Literal["room", "icu", "surgeon", "ot", "diagnostics", "medicines",
                    "consumables", "implants", "other"]
 CATEGORIES: tuple[str, ...] = Category.__args__
 
+# Charges a proportionate deduction cuts when the policy names none (or says "all expenses
+# except ..."). Room and ICU are never in it: they are capped separately.
+ASSOCIATED: tuple[str, ...] = ("surgeon", "ot", "diagnostics", "other")
+
+
+def value_in_range(name: str, value: object) -> bool:
+    """Bounds that keep the engine's output meaningful (no negative payouts)."""
+    if value is None:
+        return True
+    if name == "copay_pct":
+        return 0 <= value <= 100
+    if name == "deductible":
+        return value >= 0
+    if name == "sum_insured":
+        return value > 0
+    if name == "sublimits":
+        return all(v > 0 for v in value.values())
+    return True
+
 
 class Term[T](BaseModel):
     """One policy rule. `value` is None when the policy doesn't state it (or we couldn't
@@ -35,6 +54,13 @@ class PolicyTerms(BaseModel):
     deductible: Term[Decimal] = Term()
     sublimits: Term[dict[str, Decimal]] = Term()
     non_payable: Term[list[Category]] = Term()
+
+    @model_validator(mode="after")
+    def _in_range(self) -> "PolicyTerms":
+        for name, term in self:
+            if not value_in_range(name, term.value):
+                raise ValueError(f"{name} is out of range: {term.value}")
+        return self
 
 
 class LineItem(BaseModel):

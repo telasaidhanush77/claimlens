@@ -3,6 +3,7 @@ the PDF. One LLM call per policy, over the passages retrieved for each term, wit
 shape enforced by a JSON schema."""
 
 import json
+import re
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -12,8 +13,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.embed import Embedder
 from app.llm import LLM
-from app.models import CATEGORIES, PolicyTerms, Term
-from app.pdf import locate_quote, read_pages
+from app.models import ASSOCIATED, CATEGORIES, Limit, PolicyTerms, Term, value_in_range
+from app.pdf import locate_quote, normalize
 from app.retrieve import search_many, store
 
 TERM_QUERIES = {
@@ -27,10 +28,6 @@ TERM_QUERIES = {
     "sublimits": "sub-limit for specific diseases or procedures cataract knee replacement",
     "non_payable": "non-payable items consumables excluded expenses annexure",
 }
-
-# Charges a proportionate deduction can touch when the policy says "all expenses except ...".
-# Room/ICU are capped separately.
-ASSOCIATED = ["surgeon", "ot", "diagnostics", "other"]
 
 # ~6k tokens of passages: fits Groq's free 8k tokens/minute with room for the reply.
 PROMPT_BUDGET = 24000
@@ -133,6 +130,31 @@ def _value(name: str, obj: dict) -> Any:
     return obj.get("amount")
 
 
+NEGATION = re.compile(r"\b(?:no|nil|not|none|without)\b")
+PCT = r"\s*(?:%|percent|per cent)"
+
+
+def _has_number(quote: str, x: Decimal, pct: bool) -> bool:
+    n = re.escape(format(x.normalize(), "f"))
+    tail = PCT if pct else f"(?!{PCT})"
+    return re.search(rf"(?<![\d.]){n}(?!\d|\.\d){tail}", quote) is not None
+
+
+def value_supported(name: str, value: Any, quote: str) -> bool:
+    """The quote has to state the value, not just exist: "1% of the Sum Insured" cannot
+    verify Rs. 1 per day, and a generic sentence cannot verify a co-pay of 10%."""
+    q = normalize(quote)
+    if name in ("sum_insured", "deductible", "copay_pct"):
+        if value == 0:
+            return NEGATION.search(q) is not None
+        return _has_number(q, value, pct=name == "copay_pct")
+    if isinstance(value, Limit):
+        return _has_number(q, value.amount, pct=value.kind == "pct_si")
+    if name == "sublimits":
+        return all(_has_number(q, v, pct=False) for v in value.values())
+    return True
+
+
 def _term(name: str, obj: Any, pages: list[str]) -> Term:
     if not isinstance(obj, dict) or not obj.get("found"):
         return Term()
@@ -141,11 +163,11 @@ def _term(name: str, obj: Any, pages: list[str]) -> Term:
         hint = int(obj["page"]) if obj.get("page") else None
     except (ValidationError, TypeError, ValueError, KeyError):
         return Term()
-    if value is None:
-        return Term()
-    if isinstance(value, Decimal) and value < 0:
-        return Term()
     quote = str(obj.get("quote") or "")
+    supported = value is not None and value_in_range(name, value) and \
+        value_supported(name, value, quote)
+    if not supported:
+        return Term()
     page = locate_quote(pages, quote, hint)
     if page is None:
         return Term()
@@ -158,9 +180,9 @@ def extract_terms(pages: list[str], retrieved: dict[str, list[tuple[int, str]]],
     return PolicyTerms(**{name: _term(name, reply.get(name), pages) for name in TERM_QUERIES})
 
 
-def read_policy(pool: ConnectionPool, name: str, data: bytes, embedder: Embedder,
+def read_policy(pool: ConnectionPool, name: str, pages: list[str], embedder: Embedder,
                 llm: LLM) -> tuple[UUID, PolicyTerms]:
-    pages = read_pages(data)  # raises BadPDF / NoTextLayer before any API call
+    """Pages come from pdf.read_pages, so scans and junk are rejected before any API call."""
     with pool.connection() as conn:
         pid = conn.execute("INSERT INTO policies (name, pages, terms) VALUES (%s, %s, '{}') "
                            "RETURNING id", (name, json.dumps(pages))).fetchone()[0]

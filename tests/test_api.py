@@ -173,3 +173,33 @@ def test_upload_embedding_quota_502(make_client):
     app.dependency_overrides[get_embedder] = lambda: DownEmbedder()
     r = client.post("/api/policies", files={"file": ("p.pdf", text_pdf(), "application/pdf")})
     assert r.status_code == 502
+
+
+def test_put_out_of_range_copay_422(make_client):
+    client, _ = make_client()
+    policy = client.post("/api/policies/sample").json()
+    terms = policy["terms"]
+    terms["copay_pct"] = {"value": "150", "page": None, "quote": None, "verified": False}
+    assert client.put(f"/api/policies/{policy['id']}/terms", json=terms).status_code == 422
+
+
+def test_upload_content_length_over_cap_rejected_early(make_client):
+    client, llm = make_client()
+    r = client.post("/api/policies", content=b"x" * 10,
+                    headers={"Content-Type": "multipart/form-data; boundary=b",
+                             "Content-Length": str(16 * 1024 * 1024)})
+    assert r.status_code == 413
+
+
+def test_upload_too_many_pages_422(make_client):
+    pdf = FPDF()
+    pdf.set_font("Helvetica", size=11)
+    for _ in range(151):
+        pdf.add_page()
+        pdf.multi_cell(0, 6, "A co-payment of 10% shall apply to every admissible claim. ")
+    client, llm = make_client()
+    r = client.post("/api/policies", files={"file": ("p.pdf", bytes(pdf.output()),
+                                                     "application/pdf")})
+    assert r.status_code == 422
+    assert "150 pages" in r.json()["detail"]
+    assert llm.calls == 0

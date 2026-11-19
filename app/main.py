@@ -6,7 +6,8 @@ from functools import cache
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
@@ -26,12 +27,16 @@ ROOT = Path(__file__).resolve().parent
 SAMPLE = ROOT / "sample"
 WEB = ROOT.parent / "web" / "out"
 MAX_UPLOAD = 15 * 1024 * 1024
+MAX_PAGES = 150
 
 MSG_SCANNED = ("This PDF has no text layer (scanned). Upload the text version of your "
                "policy wording.")
 MSG_BAD_PDF = "That file isn't a readable PDF."
 MSG_LLM_DOWN = "Couldn't read the policy right now, try again in a minute."
 MSG_NO_KEYS = "Live policy reading is off on this server; try the sample policy."
+MSG_TOO_BIG = "That PDF is over 15 MB."
+MSG_TOO_LONG = (f"That PDF is over {MAX_PAGES} pages. Upload the policy wording only, not a "
+                "bundle of documents.")
 
 
 @cache
@@ -72,6 +77,16 @@ class SimulateIn(BaseModel):
 app = FastAPI(title="ClaimLens")
 
 
+@app.middleware("http")
+async def reject_oversized_upload(request: Request, call_next):
+    """Refuse a too-large upload from its Content-Length, before the body is spooled."""
+    size = request.headers.get("content-length", "")
+    too_big = size.isdigit() and int(size) > MAX_UPLOAD + 64 * 1024  # + multipart overhead
+    if request.url.path == "/api/policies" and too_big:
+        return JSONResponse({"detail": MSG_TOO_BIG}, status_code=413)
+    return await call_next(request)
+
+
 def _load(pool: ConnectionPool, policy_id: UUID) -> PolicyOut:
     with pool.connection() as conn:
         row = conn.execute("SELECT id, name, terms FROM policies WHERE id = %s",
@@ -93,18 +108,20 @@ def upload_policy(file: UploadFile, pool: ConnectionPool = Depends(get_pool),
                   llm: LLM = Depends(get_llm)) -> PolicyOut:
     data = file.file.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "That PDF is over 15 MB.")
+        raise HTTPException(413, MSG_TOO_BIG)
     try:
-        read_pages(data)  # fail fast on scans / junk before checking keys or calling the LLM
+        pages = read_pages(data)  # fail fast on scans / junk before keys or any API call
     except NoTextLayer as exc:
         raise HTTPException(422, MSG_SCANNED) from exc
     except BadPDF as exc:
         raise HTTPException(422, MSG_BAD_PDF) from exc
+    if len(pages) > MAX_PAGES:
+        raise HTTPException(422, MSG_TOO_LONG)
     if not live_reading_enabled(settings):
         raise HTTPException(503, MSG_NO_KEYS)
     name = (file.filename or "policy.pdf")[:200]
     try:
-        pid, terms = read_policy(pool, name, data, embedder, llm)
+        pid, terms = read_policy(pool, name, pages, embedder, llm)
     except LLMError as exc:
         log.warning("policy read failed: %s", exc)
         raise HTTPException(502, MSG_LLM_DOWN) from exc
