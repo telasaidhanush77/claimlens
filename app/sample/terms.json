@@ -2,7 +2,7 @@
   "sum_insured": {
     "value": "500000",
     "page": 2,
-    "quote": "The Sum Insured under this Policy is Rs. 5,00,000 for each Policy Year, available on a floater basis to all Insured Persons.",
+    "quote": "2.1 The Sum Insured under this Policy is Rs. 5,00,000 for each Policy Year, available on a floater basis to all Insured Persons.",
     "verified": true
   },
   "room_limit": {
@@ -11,7 +11,7 @@
       "amount": "1"
     },
     "page": 3,
-    "quote": "Room rent, boarding and nursing expenses are payable up to 1% of the Sum Insured per day for a normal room.",
+    "quote": "3.1 Room rent, boarding and nursing expenses are payable up to 1% of the Sum Insured per day for a normal room.",
     "verified": true
   },
   "icu_limit": {
@@ -20,13 +20,13 @@
       "amount": "2"
     },
     "page": 3,
-    "quote": "Intensive Care Unit (ICU) charges are payable up to 2% of the Sum Insured per day.",
+    "quote": "3.2 Intensive Care Unit (ICU) charges are payable up to 2% of the Sum Insured per day.",
     "verified": true
   },
   "proportionate": {
     "value": true,
     "page": 3,
-    "quote": "Proportionate deduction: if the Insured Person occupies a room whose rent exceeds the limit in Clause 3.1, the Associated Medical Expenses (surgeon and consultant fees, operation theatre charges, diagnostic charges and other hospital charges) shall be payable in the same proportion as the admissible room rent bears to the actual room rent.",
+    "quote": "3.3 Proportionate deduction: if the Insured Person occupies a room whose rent exceeds the limit in Clause 3.1, the Associated Medical Expenses (surgeon and consultant fees, operation theatre charges, diagnostic charges and other hospital charges) shall be payable in the same proportion as the admissible room rent bears to the actual room rent.",
     "verified": true
   },
   "proportionate_categories": {
@@ -37,19 +37,19 @@
       "other"
     ],
     "page": 3,
-    "quote": "Proportionate deduction: if the Insured Person occupies a room whose rent exceeds the limit in Clause 3.1, the Associated Medical Expenses (surgeon and consultant fees, operation theatre charges, diagnostic charges and other hospital charges) shall be payable in the same proportion as the admissible room rent bears to the actual room rent.",
+    "quote": "3.4 The proportionate deduction in Clause 3.3 shall not apply to the cost of medicines, implants and consumables.",
     "verified": true
   },
   "copay_pct": {
     "value": "10",
     "page": 4,
-    "quote": "A co-payment of 10% shall apply to every admissible claim under this Policy, after all other limits have been applied.",
+    "quote": "4.1 A co-payment of 10% shall apply to every admissible claim under this Policy, after all other limits have been applied.",
     "verified": true
   },
   "deductible": {
     "value": "0",
     "page": 4,
-    "quote": "No deductible applies under this Policy.",
+    "quote": "4.3 No deductible applies under this Policy.",
     "verified": true
   },
   "sublimits": {
@@ -58,7 +58,7 @@
       "Knee replacement": "300000"
     },
     "page": 4,
-    "quote": "The following sub-limits apply per Policy Year: Cataract surgery up to Rs. 40,000 per eye; Knee replacement up to Rs. 3,00,000.",
+    "quote": "4.2 The following sub-limits apply per Policy Year: Cataract surgery up to Rs. 40,000 per eye; Knee replacement up to Rs. 3,00,000.",
     "verified": true
   },
   "non_payable": {
@@ -66,7 +66,7 @@
       "consumables"
     ],
     "page": 6,
-    "quote": "Consumables are not payable under this Policy.",
+    "quote": "Consumables are not payable under this Policy. These include gloves, masks, syringes, cotton, gauze, disposable linen, caps, and similar items listed by the regulator.",
     "verified": true
   }
 }

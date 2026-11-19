@@ -103,7 +103,7 @@ For each option, replace every `room` line's amount with rate × that line's day
 - Schema: `CREATE EXTENSION IF NOT EXISTS vector;` `policies(id uuid pk default gen_random_uuid(), name text, pages jsonb not null, terms jsonb not null, created_at timestamptz default now())`; `chunks(policy_id uuid references policies on delete cascade, page int, ord int, text text, embedding vector(768))` with an HNSW cosine index.
 - `db.pool(settings) -> ConnectionPool`; `db.migrate(pool)` runs `migrations/*.sql` in order (idempotent).
 - `embed.Embedder` protocol: `embed(texts: list[str], task: Literal["doc","query"]) -> list[list[float]]`. `GeminiEmbedder` uses `batchEmbedContents` with `outputDimensionality=768` and taskType `RETRIEVAL_DOCUMENT`/`RETRIEVAL_QUERY`, in batches of 100. `FakeEmbedder` (tests) uses deterministic hashed bag-of-words vectors.
-- `retrieve.chunk(pages) -> list[tuple[int, int, str]]`: about 1,200-char chunks with a 200-char overlap, never crossing a page.
+- `retrieve.chunk(pages) -> list[tuple[int, int, str]]`: about 2,000-char chunks with a 250-char overlap, never crossing a page.
 - `retrieve.store(pool, policy_id, pages, embedder)`.
 - `retrieve.search(pool, policy_id, query, embedder, k=4) -> list[tuple[int, str]]` returns (page, text).
 - Vectors are sent as the text literal `'[..]'::vector` (no pgvector Python dependency).

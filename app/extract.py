@@ -1,7 +1,9 @@
 """Policy PDF -> typed terms. The LLM finds and quotes; we keep only what we can find in
-the PDF. One LLM call per policy, over the passages retrieved for each term."""
+the PDF. One LLM call per policy, over the passages retrieved for each term, with the reply
+shape enforced by a JSON schema."""
 
 import json
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -26,40 +28,71 @@ TERM_QUERIES = {
     "non_payable": "non-payable items consumables excluded expenses annexure",
 }
 
-SHAPES = {
-    "sum_insured": "number, rupees",
-    "room_limit": '{"kind": "per_day" | "pct_si", "amount": number} for a normal room '
-                  '(pct_si = percent of the sum insured per day)',
-    "icu_limit": 'same shape as room_limit, for ICU',
-    "proportionate": "true if other charges are reduced in proportion when the room costs "
-                     "more than the limit, false if the policy says they are not",
-    "proportionate_categories": "list of categories that proportionate deduction applies to",
-    "copay_pct": "number, percent",
-    "deductible": "number, rupees",
-    "sublimits": '{"<procedure name>": number rupees, ...}',
-    "non_payable": "list of categories the policy never pays for. Only list a category "
-                   "if everything in it is excluded (e.g. consumables); a few excluded "
-                   "admin charges do not make the whole 'other' category non-payable",
+# Charges a proportionate deduction can touch when the policy says "all expenses except ...".
+# Room/ICU are capped separately.
+ASSOCIATED = ["surgeon", "ot", "diagnostics", "other"]
+
+# ~6k tokens of passages: fits Groq's free 8k tokens/minute with room for the reply.
+PROMPT_BUDGET = 24000
+
+_NUM = {"type": "number"}
+_CATS = {"type": "array", "items": {"type": "string", "enum": list(CATEGORIES)}}
+_LIMIT = {"kind": {"type": "string", "enum": ["per_day", "pct_si"]}, "amount": _NUM}
+_VALUE_FIELDS: dict[str, dict] = {
+    "sum_insured": {"amount": _NUM},
+    "room_limit": _LIMIT,
+    "icu_limit": _LIMIT,
+    "proportionate": {"applies": {"type": "boolean"}},
+    "proportionate_categories": {"reduced": _CATS, "not_reduced": _CATS},
+    "copay_pct": {"amount": _NUM},
+    "deductible": {"amount": _NUM},
+    "sublimits": {"items": {"type": "array", "items": {
+        "type": "object", "properties": {"procedure": {"type": "string"}, "amount": _NUM},
+        "required": ["procedure", "amount"]}}},
+    "non_payable": {"categories": _CATS},
 }
 
+
+def _term_schema(fields: dict) -> dict:
+    props = {"found": {"type": "boolean"}, "page": {"type": "integer"},
+             "quote": {"type": "string"}, **fields}
+    return {"type": "object", "properties": props, "required": list(props)}
+
+
+SCHEMA = {"type": "object",
+          "properties": {k: _term_schema(v) for k, v in _VALUE_FIELDS.items()},
+          "required": list(_VALUE_FIELDS)}
+
 PROMPT = """You read Indian health-insurance policy wordings.
-From the passages below, extract each term. Answer with JSON only, one key per term.
-Every term uses the same wrapper:
-  "<term>": {{"value": <value>, "page": <page number>, "quote": "<the exact sentence from
-  the passage that states it, copied word for word>"}}
-Example: "copay_pct": {{"value": 20, "page": 7, "quote": "A co-payment of 20% applies to
-each claim."}}  and  "room_limit": {{"value": {{"kind": "per_day", "amount": 3000}},
-"page": 4, "quote": "Room rent is covered up to Rs. 3,000 per day."}}
-or "<term>": null when the passages do not state it. Never guess a value: if you can't quote
-it, answer null. If the policy explicitly says a term does not apply (for example "no
-deductible applies"), answer value 0 (or false, or []) with that sentence as the quote.
+For each term below, find the sentence in the passages that states it.
+- found: true only if a passage states it. Otherwise found=false and the other fields are
+  placeholders (0, "", false, []).
+- quote: that sentence copied word for word from the passage. Never paraphrase.
+- page: the page number shown above that passage.
+- If the policy explicitly says a term does not apply (e.g. "no deductible applies"),
+  found=true with amount 0 (or applies=false) and that sentence as the quote.
+- A conditional rule (e.g. co-pay only for some zones or ages) is not a flat rule: found=false.
 
-Terms and value shapes:
-{shapes}
+Terms:
+- sum_insured: the sum insured in rupees (amount).
+- room_limit: daily room rent limit for a normal room. kind "per_day" with amount in rupees,
+  or kind "pct_si" with amount = percent of the sum insured per day.
+- icu_limit: same, for ICU.
+- proportionate: applies=true if other charges are reduced in proportion when the room
+  costs more than the limit.
+- proportionate_categories: from the proportionate-deduction clause, "reduced" = the
+  categories it names as reduced, "not_reduced" = categories it says are excepted / not
+  reduced. Many policies say "all expenses except X and Y": then reduced=[] and
+  not_reduced=[X, Y].
+- copay_pct: co-payment percent on every claim (amount).
+- deductible: deductible in rupees (amount).
+- sublimits: caps for named procedures (items of procedure + rupee amount).
+- non_payable: categories the policy never pays for. Only list a category if everything in
+  it is excluded (e.g. consumables); a few excluded admin charges do not make "other"
+  non-payable.
 
-Categories (use only these words): {categories}
-(room, icu, surgeon = surgeon/consultant fees, ot = operation theatre, diagnostics,
-medicines, consumables, implants, other = other hospital charges)
+Categories: room, icu, surgeon (surgeon/consultant fees), ot (operation theatre),
+diagnostics, medicines, consumables, implants, other (other hospital charges).
 
 Passages:
 {passages}
@@ -69,29 +102,50 @@ _ADAPTERS = {name: TypeAdapter(field.annotation.model_fields["value"].annotation
              for name, field in PolicyTerms.model_fields.items()}
 
 
-def _prompt(retrieved: dict[str, list[tuple[int, str]]]) -> str:
-    seen: dict[tuple[int, str], None] = {}
-    for hits in retrieved.values():
-        seen.update(dict.fromkeys(hits))
-    passages = "\n\n".join(f"[page {p}]\n{t}" for p, t in sorted(seen, key=lambda h: h[0]))
-    shapes = "\n".join(f"- {k}: {v}" for k, v in SHAPES.items())
-    return PROMPT.format(shapes=shapes, categories=", ".join(CATEGORIES), passages=passages)
+def _passages(retrieved: dict[str, list[tuple[int, str]]]) -> str:
+    """Round-robin over terms (each term's best hit first), de-duplicated, under budget."""
+    picked: dict[tuple[int, str], None] = {}
+    size = 0
+    depth = max((len(h) for h in retrieved.values()), default=0)
+    for rank in range(depth):
+        for hits in retrieved.values():
+            if rank >= len(hits) or hits[rank] in picked:
+                continue
+            if size + len(hits[rank][1]) > PROMPT_BUDGET and picked:
+                continue
+            picked[hits[rank]] = None
+            size += len(hits[rank][1])
+    return "\n\n".join(f"[page {p}]\n{t}" for p, t in sorted(picked, key=lambda h: h[0]))
 
 
-def _term(name: str, raw: Any, pages: list[str]) -> Term:
-    if not isinstance(raw, dict):
-        return Term()
-    if "value" not in raw and "quote" in raw:  # model flattened {"kind":..,"page":..,"quote":..}
-        raw = {"value": {k: v for k, v in raw.items() if k not in ("page", "quote")},
-               "page": raw.get("page"), "quote": raw["quote"]}
-    if raw.get("value") is None:
+def _value(name: str, obj: dict) -> Any:
+    if name in ("room_limit", "icu_limit"):
+        return {"kind": obj.get("kind"), "amount": obj.get("amount")}
+    if name == "proportionate":
+        return obj.get("applies")
+    if name == "proportionate_categories":
+        reduced, excepted = obj.get("reduced") or [], set(obj.get("not_reduced") or [])
+        return [c for c in (reduced or ASSOCIATED) if c not in excepted]
+    if name == "non_payable":
+        return obj.get("categories")
+    if name == "sublimits":
+        return {str(i["procedure"]): i["amount"] for i in obj.get("items") or []}
+    return obj.get("amount")
+
+
+def _term(name: str, obj: Any, pages: list[str]) -> Term:
+    if not isinstance(obj, dict) or not obj.get("found"):
         return Term()
     try:
-        value = _ADAPTERS[name].validate_python(raw["value"])
-        hint = int(raw["page"]) if raw.get("page") is not None else None
-    except (ValidationError, TypeError, ValueError):
+        value = _ADAPTERS[name].validate_python(_value(name, obj))
+        hint = int(obj["page"]) if obj.get("page") else None
+    except (ValidationError, TypeError, ValueError, KeyError):
         return Term()
-    quote = str(raw.get("quote") or "")
+    if value is None:
+        return Term()
+    if isinstance(value, Decimal) and value < 0:
+        return Term()
+    quote = str(obj.get("quote") or "")
     page = locate_quote(pages, quote, hint)
     if page is None:
         return Term()
@@ -100,7 +154,7 @@ def _term(name: str, raw: Any, pages: list[str]) -> Term:
 
 def extract_terms(pages: list[str], retrieved: dict[str, list[tuple[int, str]]],
                   llm: LLM) -> PolicyTerms:
-    reply = llm.json(_prompt(retrieved))
+    reply = llm.json(PROMPT.format(passages=_passages(retrieved)), SCHEMA)
     return PolicyTerms(**{name: _term(name, reply.get(name), pages) for name in TERM_QUERIES})
 
 

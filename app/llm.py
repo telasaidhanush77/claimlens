@@ -1,6 +1,7 @@
 """JSON-mode LLM clients (Gemini first, Groq as fallback) on free tiers."""
 
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Protocol
@@ -17,26 +18,36 @@ class LLMError(Exception):
 
 
 class LLM(Protocol):
-    def json(self, prompt: str) -> dict: ...
+    def json(self, prompt: str, schema: dict | None = None) -> dict: ...
 
 
-def _post(client: httpx.Client, url: str, body: dict, headers: dict,
-          sleep: Callable[[float], None]) -> dict:
-    """Retry 429/5xx and network errors (honouring Retry-After, capped); other 4xx fail fast."""
-    for attempt in range(1, TRIES + 1):
+def _retry_after(r: httpx.Response) -> float | None:
+    """Seconds the server asked us to wait: Retry-After header, or Gemini's RetryInfo body."""
+    after = r.headers.get("Retry-After", "")
+    if after.isdigit():
+        return float(after)
+    m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', r.text)
+    return float(m.group(1)) if m else None
+
+
+def post_json(client: httpx.Client, url: str, body: dict, headers: dict,
+              sleep: Callable[[float], None], tries: int = TRIES,
+              max_wait: float = MAX_WAIT_S) -> dict:
+    """Retry 429/5xx and network errors (honouring the server's wait, capped); other 4xx fail
+    fast. Every failure surfaces as LLMError."""
+    for attempt in range(1, tries + 1):
         try:
             r = client.post(url, json=body, headers=headers)
         except httpx.TransportError as exc:
-            if attempt == TRIES:
+            if attempt == tries:
                 raise LLMError(f"network: {exc}") from exc
             sleep(2 ** attempt)
             continue
         if r.status_code < 400:
             return r.json()
-        if r.status_code not in RETRYABLE or attempt == TRIES:
+        if r.status_code not in RETRYABLE or attempt == tries:
             raise LLMError(f"HTTP {r.status_code}: {r.text[:200]}")
-        after = r.headers.get("Retry-After", "")
-        sleep(min(int(after), MAX_WAIT_S) if after.isdigit() else 2 ** attempt)
+        sleep(min(_retry_after(r) or 2 ** attempt, max_wait))
     raise LLMError("unreachable")
 
 
@@ -58,11 +69,13 @@ class GeminiLLM:
         self.api_key, self.model, self.sleep = api_key, model, sleep
         self.client = client or httpx.Client(timeout=90)
 
-    def json(self, prompt: str) -> dict:
-        body = {"contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"responseMimeType": "application/json", "temperature": 0}}
-        data = _post(self.client, self.URL.format(model=self.model), body,
-                     {"x-goog-api-key": self.api_key}, self.sleep)
+    def json(self, prompt: str, schema: dict | None = None) -> dict:
+        config: dict = {"responseMimeType": "application/json", "temperature": 0}
+        if schema:
+            config["responseJsonSchema"] = schema
+        body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": config}
+        data = post_json(self.client, self.URL.format(model=self.model), body,
+                         {"x-goog-api-key": self.api_key}, self.sleep)
         try:
             return _parse(data["candidates"][0]["content"]["parts"][0]["text"])
         except (KeyError, IndexError) as exc:
@@ -77,11 +90,12 @@ class GroqLLM:
         self.api_key, self.model, self.sleep = api_key, model, sleep
         self.client = client or httpx.Client(timeout=90)
 
-    def json(self, prompt: str) -> dict:
-        body = {"model": self.model, "temperature": 0,
-                "response_format": {"type": "json_object"},
+    def json(self, prompt: str, schema: dict | None = None) -> dict:
+        fmt = ({"type": "json_schema", "json_schema": {"name": "reply", "schema": schema}}
+               if schema else {"type": "json_object"})
+        body = {"model": self.model, "temperature": 0, "response_format": fmt,
                 "messages": [{"role": "user", "content": prompt}]}
-        data = _post(self.client, self.URL, body,
+        data = post_json(self.client, self.URL, body,
                      {"Authorization": f"Bearer {self.api_key}"}, self.sleep)
         try:
             return _parse(data["choices"][0]["message"]["content"])
@@ -93,10 +107,10 @@ class FallbackLLM:
     def __init__(self, primary: LLM, secondary: LLM | None):
         self.primary, self.secondary = primary, secondary
 
-    def json(self, prompt: str) -> dict:
+    def json(self, prompt: str, schema: dict | None = None) -> dict:
         try:
-            return self.primary.json(prompt)
+            return self.primary.json(prompt, schema)
         except LLMError:
             if self.secondary is None:
                 raise
-            return self.secondary.json(prompt)
+            return self.secondary.json(prompt, schema)

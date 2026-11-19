@@ -2,7 +2,7 @@ import json
 import uuid
 
 from app.embed import FakeEmbedder
-from app.retrieve import chunk, search, store
+from app.retrieve import CHUNK, chunk, search, store
 
 PAGES = [
     "Definitions of hospital, insured person and policy period. " * 20,
@@ -23,7 +23,7 @@ def test_chunks_stay_within_page():
     assert {p for p, _, _ in chunks} == {1, 2, 3}
     for page, _, text in chunks:
         assert text in PAGES[page - 1]
-        assert len(text) <= 1200
+        assert len(text) <= CHUNK
     assert [o for _, o, _ in chunks] == list(range(len(chunks)))
 
 

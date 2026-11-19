@@ -4,7 +4,7 @@ import pytest
 from fpdf import FPDF
 
 from app.embed import FakeEmbedder
-from app.extract import TERM_QUERIES, extract_terms, read_policy
+from app.extract import PROMPT_BUDGET, SCHEMA, TERM_QUERIES, _passages, extract_terms, read_policy
 from app.llm import FallbackLLM, LLMError
 from app.models import PolicyTerms
 
@@ -17,49 +17,63 @@ PAGES = [
 
 class ScriptedLLM:
     def __init__(self, reply=None, error=False):
-        self.reply, self.error, self.calls = reply or {}, error, 0
+        self.reply, self.error, self.calls, self.schemas = reply or {}, error, 0, []
 
-    def json(self, prompt: str) -> dict:
+    def json(self, prompt: str, schema: dict | None = None) -> dict:
         self.calls += 1
+        self.schemas.append(schema)
         if self.error:
             raise LLMError("quota")
         return self.reply
 
 
+def found(page, quote, **value):
+    return {"found": True, "page": page, "quote": quote, **value}
+
+
 RETRIEVED = {field: [(1, PAGES[0]), (2, PAGES[1]), (3, PAGES[2])] for field in TERM_QUERIES}
 
 
-def test_every_policy_field_has_a_query():
-    assert set(TERM_QUERIES) == set(PolicyTerms.model_fields)
+def test_every_policy_field_has_a_query_and_schema():
+    assert set(TERM_QUERIES) == set(PolicyTerms.model_fields) == set(SCHEMA["properties"])
+
+
+def test_schema_is_sent_to_the_llm():
+    llm = ScriptedLLM({})
+    extract_terms(PAGES, RETRIEVED, llm)
+    assert llm.schemas == [SCHEMA]
 
 
 def test_verified_quote_keeps_value():
-    llm = ScriptedLLM({"room_limit": {"value": {"kind": "pct_si", "amount": 1}, "page": 2,
-                                      "quote": "room rent is payable up to 1% of the sum insured"}})
+    llm = ScriptedLLM({"room_limit": found(2, "room rent is payable up to 1% of the sum insured",
+                                           kind="pct_si", amount=1)})
     terms = extract_terms(PAGES, RETRIEVED, llm)
     assert terms.room_limit.verified
     assert terms.room_limit.value.amount == Decimal(1)
     assert terms.room_limit.page == 2
 
 
+def test_not_found_is_none():
+    llm = ScriptedLLM({"copay_pct": {"found": False, "page": 0, "quote": "", "amount": 0}})
+    assert extract_terms(PAGES, RETRIEVED, llm).copay_pct.value is None
+
+
 def test_invented_quote_drops_value():
-    llm = ScriptedLLM({"copay_pct": {"value": 0, "page": 3,
-                                     "quote": "no co-payment applies to any claim"}})
+    llm = ScriptedLLM({"copay_pct": found(3, "no co-payment applies to any claim", amount=0)})
     terms = extract_terms(PAGES, RETRIEVED, llm)
     assert terms.copay_pct.value is None
     assert not terms.copay_pct.verified
 
 
 def test_wrong_page_corrected():
-    llm = ScriptedLLM({"copay_pct": {"value": 10, "page": 1,
-                                     "quote": "A co-payment of 10% shall apply"}})
+    llm = ScriptedLLM({"copay_pct": found(1, "A co-payment of 10% shall apply", amount=10)})
     assert extract_terms(PAGES, RETRIEVED, llm).copay_pct.page == 3
 
 
 def test_bad_field_shape_marks_only_that_term():
     llm = ScriptedLLM({
-        "room_limit": {"value": "one percent", "page": 2, "quote": "Room rent is payable up to"},
-        "copay_pct": {"value": 10, "page": 3, "quote": "A co-payment of 10% shall apply"},
+        "room_limit": found(2, "Room rent is payable up to", kind="daily", amount=1),
+        "copay_pct": found(3, "A co-payment of 10% shall apply", amount=10),
     })
     terms = extract_terms(PAGES, RETRIEVED, llm)
     assert terms.room_limit.value is None
@@ -67,13 +81,19 @@ def test_bad_field_shape_marks_only_that_term():
 
 
 def test_category_outside_enum_rejected():
-    llm = ScriptedLLM({"non_payable": {"value": ["gloves"], "page": 1,
-                                       "quote": "The Sum Insured under this policy"}})
+    llm = ScriptedLLM({"non_payable": found(1, "The Sum Insured under this policy",
+                                            categories=["gloves"])})
     assert extract_terms(PAGES, RETRIEVED, llm).non_payable.value is None
 
 
+def test_sublimits_become_a_mapping():
+    llm = ScriptedLLM({"sublimits": found(1, "The Sum Insured under this policy", items=[
+        {"procedure": "Cataract", "amount": 40000}])})
+    assert extract_terms(PAGES, RETRIEVED, llm).sublimits.value == {"Cataract": Decimal(40000)}
+
+
 def test_non_dict_reply_entries_ignored():
-    llm = ScriptedLLM({"room_limit": "1%", "copay_pct": None, "unknown": {"value": 1}})
+    llm = ScriptedLLM({"room_limit": "1%", "copay_pct": None, "unknown": {"found": True}})
     terms = extract_terms(PAGES, RETRIEVED, llm)
     assert terms.room_limit.value is None and terms.copay_pct.value is None
 
@@ -82,6 +102,14 @@ def test_single_llm_call_for_all_terms():
     llm = ScriptedLLM({})
     extract_terms(PAGES, RETRIEVED, llm)
     assert llm.calls == 1
+
+
+def test_passages_capped_but_every_term_keeps_its_best_hit():
+    big = {f: [(i, f"{f} passage {i} " + "x" * 1950) for i in range(1, 6)] for f in TERM_QUERIES}
+    text = _passages(big)
+    assert len(text) <= PROMPT_BUDGET + 200
+    for f in TERM_QUERIES:
+        assert f"{f} passage 1 " in text
 
 
 def test_fallback_used_when_primary_fails():
@@ -105,8 +133,7 @@ def _pdf(pages):
 
 
 def test_read_policy_saves_verified_terms(pool):
-    llm = ScriptedLLM({"copay_pct": {"value": 10, "page": 3,
-                                     "quote": "A co-payment of 10% shall apply"}})
+    llm = ScriptedLLM({"copay_pct": found(3, "A co-payment of 10% shall apply", amount=10)})
     pid, terms = read_policy(pool, "p.pdf", _pdf(PAGES), FakeEmbedder(), llm)
     assert terms.copay_pct.verified
     with pool.connection() as conn:
@@ -123,13 +150,18 @@ def test_read_policy_llm_failure_leaves_nothing_behind(pool):
         assert conn.execute("SELECT count(*) FROM policies").fetchone()[0] == 0
 
 
-def test_flattened_object_value_accepted():
-    llm = ScriptedLLM({"room_limit": {"kind": "pct_si", "amount": 1, "page": 2,
-                                      "quote": "Room rent is payable up to 1% of the Sum Insured"}})
-    terms = extract_terms(PAGES, RETRIEVED, llm)
-    assert terms.room_limit.verified and terms.room_limit.value.amount == Decimal(1)
+QUOTE = "The Sum Insured under this policy"
 
 
-def test_bare_value_without_quote_dropped():
-    llm = ScriptedLLM({"sublimits": {"Cataract surgery": 40000}})
-    assert extract_terms(PAGES, RETRIEVED, llm).sublimits.value is None
+def test_proportionate_except_list_becomes_the_reduced_categories():
+    llm = ScriptedLLM({"proportionate_categories": found(
+        1, QUOTE, reduced=[], not_reduced=["medicines", "consumables", "implants", "diagnostics"])})
+    value = extract_terms(PAGES, RETRIEVED, llm).proportionate_categories.value
+    assert sorted(value) == ["ot", "other", "surgeon"]
+
+
+def test_proportionate_named_list_kept_minus_exclusions():
+    llm = ScriptedLLM({"proportionate_categories": found(
+        1, QUOTE, reduced=["surgeon", "ot", "medicines"], not_reduced=["medicines"])})
+    value = extract_terms(PAGES, RETRIEVED, llm).proportionate_categories.value
+    assert sorted(value) == ["ot", "surgeon"]

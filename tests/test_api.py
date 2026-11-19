@@ -17,7 +17,7 @@ class ScriptedLLM:
     def __init__(self, reply=None, error=False):
         self.reply, self.error, self.calls = reply or {}, error, 0
 
-    def json(self, prompt):
+    def json(self, prompt, schema=None):
         self.calls += 1
         if self.error:
             raise LLMError("quota")
@@ -74,7 +74,7 @@ def test_sample_then_simulate_roundtrip(make_client):
 
 
 def test_upload_reads_policy(make_client):
-    llm = ScriptedLLM({"copay_pct": {"value": 10, "page": 1,
+    llm = ScriptedLLM({"copay_pct": {"found": True, "amount": 10, "page": 1,
                                      "quote": "A co-payment of 10% shall apply"}})
     client, _ = make_client(llm)
     r = client.post("/api/policies", files={"file": ("p.pdf", text_pdf(), "application/pdf")})
@@ -160,3 +160,16 @@ def test_negative_amount_422(make_client):
 def test_sample_estimate_endpoint(make_client):
     client, _ = make_client()
     assert client.get("/api/sample-estimate").json()["procedure"] == "Knee replacement"
+
+
+class DownEmbedder:
+    def embed(self, texts, task):
+        from app.llm import LLMError
+        raise LLMError("embedding quota")
+
+
+def test_upload_embedding_quota_502(make_client):
+    client, _ = make_client()
+    app.dependency_overrides[get_embedder] = lambda: DownEmbedder()
+    r = client.post("/api/policies", files={"file": ("p.pdf", text_pdf(), "application/pdf")})
+    assert r.status_code == 502

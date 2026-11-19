@@ -6,8 +6,8 @@ from psycopg_pool import ConnectionPool
 
 from app.embed import Embedder
 
-CHUNK = 1200
-OVERLAP = 200
+CHUNK = 2000
+OVERLAP = 250
 
 
 def chunk(pages: list[str]) -> list[tuple[int, int, str]]:
